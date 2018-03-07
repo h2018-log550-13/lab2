@@ -31,6 +31,13 @@
 static void vOutputLCD(void *pvParameters);
 static void vCalculatePower(void *pvParameters);
 static void vReadingADC(void *pvParameters);
+static void vReadingADC(void *pvParameters);
+
+static void LED_Flash(void *pvParameters);
+static void UART_Cmd_RX(void *pvParameters);
+static void UART_SendSample(void *pvParameters);
+static void ADC_Cmd(void *pvParameters);
+static void AlarmMsgQ(void *pvParameters);
 
 // initialization functions
 void initialiseLCD(void);
@@ -39,6 +46,35 @@ void initialiseLCD(void);
 volatile int POWER = 0;
 volatile int TEMPERATURE_DESIRED = 0;
 volatile int TEMPERATURE_ROOM = 0;
+volatile bool statusBool = true;
+volatile bool acq_status = false;
+volatile U32 char_recu = 0;
+
+// define var SAM
+#define USART_BAUDRATE              56700
+#define USART_INTRPT_PRIO           AVR32_INTC_INT0    // USART interrupt priority
+#define ACQ_START_CHAR              0x73         // 0x73 = 's'
+#define ACQ_STOP_CHAR               0x78         // 0x78 = 'x'
+#define USART_TX_VAL_MASK           0xFE         // Les 7 premiers bits
+#define USART_TX_VAL_LIGHT_ID       1
+#define USART_TX_VAL_POT_ID         0
+#define USART_TX_SET_VAL(val,id) \
+AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR_MASK; AVR32_USART1.ier = AVR32_USART_IER_TXRDY_MASK;
+/**
+ * 8bits pour conserver l'etat du programme
+ * bit 1: le cycle actuel du clignotement (0 = off, 1 = on)
+ * bit 2: en acquisition (0 = faux, 1 = vrai)
+ * bit 3: taux d'échantillonage (0=1000, 1=2000)
+ * bit 4: pret a transmettre une valeur du capteur de lumiere (0 = faux, 1 = vrai)
+ * bit 5: pret a tansmettre une valeur du potentiometre (0 = faux, 1 = vrai)
+*/
+volatile U8 status = 0;
+#define STATUS_LED_POWER_STATE    0x01
+#define STATUS_INTERVAL_STATE     0x02
+#define STATUS_IN_ACQ             0x04
+#define STATUS_SAMPLE_RATE        0x08
+#define STATUS_TX_LIGHT_READY     0x10
+#define STATUS_TX_POT_READY       0x20
 
 // semaphore
 static xSemaphoreHandle POWER_SEMAPHORE = NULL;
@@ -59,6 +95,13 @@ static const unsigned short temperature_code[] = { 0x3B4, 0x3B0, 0x3AB, 0x3A6,
 0x47, 0x45, 0x43, 0x41, 0x3F, 0x3D, 0x3C, 0x3A, 0x38 };
 
 int main(void) {
+
+	//Setup bouton SAM
+	//gpio_enable_gpio_pin(GPIO_PUSH_BUTTON_0);
+	//gpio_enable_gpio_pin(GPIO_PUSH_BUTTON_1);
+	//gpio_enable_pin_interrupt(GPIO_PUSH_BUTTON_0, GPIO_FALLING_EDGE);
+	//gpio_enable_pin_interrupt(GPIO_PUSH_BUTTON_1, GPIO_FALLING_EDGE);
+
 	// Configure Osc0 in crystal mode (i.e. use of an external crystal source, with
 	// frequency FOSC0) with an appropriate startup time then switch the main clock
 	// source to Osc0.
@@ -74,24 +117,40 @@ int main(void) {
 	TEMPERATURE_ROOM_SEMAPHORE = xSemaphoreCreateCounting(1,1);
 
 	/* Start the demo tasks defined within this file. */
-	xTaskCreate(
-	vOutputLCD
-	, (const signed portCHAR *)"Output"
-	, configMINIMAL_STACK_SIZE*3
-	, NULL
-	, tskIDLE_PRIORITY
-	, NULL );
-	xTaskCreate(
-	vCalculatePower
-	, (const signed portCHAR *)"Calcul"
-	, configMINIMAL_STACK_SIZE
-	, NULL
-	, tskIDLE_PRIORITY + 2
-	, NULL );
+	//xTaskCreate(
+	//vOutputLCD
+	//, (const signed portCHAR *)"Output"
+	//, configMINIMAL_STACK_SIZE*3
+	//, NULL
+	//, tskIDLE_PRIORITY
+	//, NULL );
+	//xTaskCreate(
+	//vCalculatePower
+	//, (const signed portCHAR *)"Calcul"
+	//, configMINIMAL_STACK_SIZE
+	//, NULL
+	//, tskIDLE_PRIORITY + 2
+	//, NULL );
 	xTaskCreate(
 	vReadingADC
 	, (const signed portCHAR *)"Reading"
 	, configMINIMAL_STACK_SIZE
+	, NULL
+	, tskIDLE_PRIORITY + 1
+	, NULL );
+
+	xTaskCreate(
+	LED_Flash
+	, (const signed portCHAR *)"Flash"
+	, configMINIMAL_STACK_SIZE*3
+	, NULL
+	, tskIDLE_PRIORITY +1
+	, NULL );
+
+	xTaskCreate(
+	UART_Cmd_RX
+	, (const signed portCHAR *)"ACQ"
+	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, NULL );
@@ -102,6 +161,85 @@ int main(void) {
 	/* Will only get here if there was insufficient memory to create the idle task. */
 
 	return 0;
+}
+static void UART_Cmd_RX(void *pvParameters)
+{
+	while(1){
+		if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
+		{
+			//Lire le char recu dans registre RHR, et le stocker dans un 32bit
+			char_recu = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
+			
+			// On active ou désactive l'acquisition le charactere recus
+			if(char_recu == ACQ_START_CHAR && !(status & STATUS_IN_ACQ))
+			{
+				//status |= STATUS_IN_ACQ;
+				acq_status=true;
+			}
+			if(char_recu == ACQ_STOP_CHAR && (status & STATUS_IN_ACQ))
+			{
+				//status &= ~STATUS_IN_ACQ;
+				acq_status=false;
+			}
+			
+		}
+		else  // Donc cette l'interruption est lancee par une fin de transmission, bit TXRDY=1
+		{
+			if(status & STATUS_TX_POT_READY)
+			{
+				// On transmet les donnees pour le potentiometre
+				//USART_TX_SET_VAL(adc_value_pot, USART_TX_VAL_POT_ID);
+				//status &= ~STATUS_TX_POT_READY;
+			}
+			else
+			{
+				// On arrete les transferts
+				// On desactive la source d'interrution du UART en fin de transmission (TXRDY).
+				AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
+			}
+		}
+		//if (GPIO_PUSH_BUTTON_0_PRESSED)
+		//{
+			//acq_status=true;
+		//}
+		//else if(GPIO_PUSH_BUTTON_1_PRESSED)
+		//{
+			//acq_status=false;
+		//}
+		//gpio_clear_pin_interrupt_flag(GPIO_PUSH_BUTTON_0);
+		//gpio_clear_pin_interrupt_flag(GPIO_PUSH_BUTTON_1);
+		//vTaskDelay(50);
+	}
+	
+}
+static void LED_Flash(void *pvParameters)
+{
+	while(1){
+
+		if(!statusBool)
+		{
+			gpio_set_gpio_pin(LED0_GPIO); statusBool=true;
+			if(acq_status&&!statusBool)
+			{
+				gpio_clr_gpio_pin(LED1_GPIO);
+			}else
+			{
+				gpio_set_gpio_pin(LED1_GPIO); 
+			}
+		}else
+		{
+			gpio_clr_gpio_pin(LED0_GPIO);statusBool=false;
+			if(acq_status&&!statusBool)
+			{
+				 gpio_clr_gpio_pin(LED1_GPIO);
+			}else
+			{
+				gpio_set_gpio_pin(LED1_GPIO);
+			}
+		}
+
+		vTaskDelay(200);
+	}
 }
 
 static void vReadingADC(void *pvParameters) {
@@ -381,6 +519,24 @@ void initialiseLCD(void) {
 
 	// init the interrupts
 	INTC_init_interrupts();
+	//UART SAM
+	/****************************/
+	/**	Configuration de USART **/
+	/****************************/
+	static const gpio_map_t USART_GPIO_MAP =
+	{
+		{AVR32_USART1_RXD_0_0_PIN, AVR32_USART1_RXD_0_0_FUNCTION},
+		{AVR32_USART1_TXD_0_0_PIN, AVR32_USART1_TXD_0_0_FUNCTION}
+	};
+	
+	// Assigner les pins du GPIO a etre utiliser par le USART1.
+	gpio_enable_module(USART_GPIO_MAP,sizeof(USART_GPIO_MAP) / sizeof(USART_GPIO_MAP[0]));
+	// Initialise le USART1 en mode seriel RS232
+	//usart_init_rs232((&AVR32_USART1), &usart_opt, FOSC0);
+	// Enregister le USART interrupt handler au INTC
+	//INTC_register_interrupt(&usart_int_handler, AVR32_USART1_IRQ, USART_INTRPT_PRIO);
+	// Activer la source d'interrution du UART en reception (RXRDY)
+	AVR32_USART1.ier = AVR32_USART_IER_RXRDY_MASK;
 
 	// Enable all interrupts.
 	Enable_global_interrupt();
