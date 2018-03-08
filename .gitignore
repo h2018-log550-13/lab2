@@ -54,3 +54,5 @@ dkms.conf
 # Binaries
 Debug/
 Release/
+
+.vs/
