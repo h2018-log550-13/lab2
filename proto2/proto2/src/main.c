@@ -46,13 +46,13 @@ void initialiseLCD(void);
 volatile int POWER = 0;
 volatile int TEMPERATURE_DESIRED = 0;
 volatile int TEMPERATURE_ROOM = 0;
-volatile bool statusBool = true;
-volatile bool acq_status = false;
+volatile bool is_in_acq = false;
+volatile bool is_light_ready= false;
+volatile bool is_pot_ready = false;
 volatile U32 char_recu = 0;
 
 // define var SAM
 #define USART_BAUDRATE              56700
-#define USART_INTRPT_PRIO           AVR32_INTC_INT0    // USART interrupt priority
 #define ACQ_START_CHAR              0x73         // 0x73 = 's'
 #define ACQ_STOP_CHAR               0x78         // 0x78 = 'x'
 #define USART_TX_VAL_MASK           0xFE         // Les 7 premiers bits
@@ -60,21 +60,6 @@ volatile U32 char_recu = 0;
 #define USART_TX_VAL_POT_ID         0
 #define USART_TX_SET_VAL(val,id) \
 AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR_MASK; AVR32_USART1.ier = AVR32_USART_IER_TXRDY_MASK;
-/**
- * 8bits pour conserver l'etat du programme
- * bit 1: le cycle actuel du clignotement (0 = off, 1 = on)
- * bit 2: en acquisition (0 = faux, 1 = vrai)
- * bit 3: taux d'échantillonage (0=1000, 1=2000)
- * bit 4: pret a transmettre une valeur du capteur de lumiere (0 = faux, 1 = vrai)
- * bit 5: pret a tansmettre une valeur du potentiometre (0 = faux, 1 = vrai)
-*/
-volatile U8 status = 0;
-#define STATUS_LED_POWER_STATE    0x01
-#define STATUS_INTERVAL_STATE     0x02
-#define STATUS_IN_ACQ             0x04
-#define STATUS_SAMPLE_RATE        0x08
-#define STATUS_TX_LIGHT_READY     0x10
-#define STATUS_TX_POT_READY       0x20
 
 // semaphore
 static xSemaphoreHandle POWER_SEMAPHORE = NULL;
@@ -162,28 +147,30 @@ int main(void) {
 
 	return 0;
 }
+
 static void UART_Cmd_RX(void *pvParameters)
 {
 	while(1){
+		/*
 		if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 		{
 			//Lire le char recu dans registre RHR, et le stocker dans un 32bit
 			char_recu = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
 			
 			// On active ou désactive l'acquisition le charactere recus
-			if(char_recu == ACQ_START_CHAR && !(status & STATUS_IN_ACQ))
+			if(char_recu == ACQ_STOP_CHAR && is_in_acq)
 			{
 				//status |= STATUS_IN_ACQ;
-				acq_status=true;
+				is_in_acq=true;
 			}
-			if(char_recu == ACQ_STOP_CHAR && (status & STATUS_IN_ACQ))
+			if(char_recu == ACQ_START_CHAR && is_in_acq)
 			{
 				//status &= ~STATUS_IN_ACQ;
-				acq_status=false;
+				is_in_acq=false;
 			}
 			
 		}
-		else  // Donc cette l'interruption est lancee par une fin de transmission, bit TXRDY=1
+		else if (AVR32_USART1.csr & (AVR32_USART_IDR_TXRDY_MASK)) // Donc cette l'interruption est lancee par une fin de transmission, bit TXRDY=1
 		{
 			if(status & STATUS_TX_POT_READY)
 			{
@@ -200,44 +187,41 @@ static void UART_Cmd_RX(void *pvParameters)
 		}
 		//if (GPIO_PUSH_BUTTON_0_PRESSED)
 		//{
-			//acq_status=true;
+			//is_in_acq=true;
 		//}
 		//else if(GPIO_PUSH_BUTTON_1_PRESSED)
 		//{
-			//acq_status=false;
+			//is_in_acq=false;
 		//}
 		//gpio_clear_pin_interrupt_flag(GPIO_PUSH_BUTTON_0);
 		//gpio_clear_pin_interrupt_flag(GPIO_PUSH_BUTTON_1);
-		//vTaskDelay(50);
+		*/
+		vTaskDelay(50);
 	}
 	
 }
 static void LED_Flash(void *pvParameters)
 {
-	while(1){
-
-		if(!statusBool)
+	static bool is_led_high = false;
+	while(1)
+	{
+		if(is_led_high)
 		{
-			gpio_set_gpio_pin(LED0_GPIO); statusBool=true;
-			if(acq_status&&!statusBool)
-			{
-				gpio_clr_gpio_pin(LED1_GPIO);
-			}else
-			{
-				gpio_set_gpio_pin(LED1_GPIO); 
-			}
-		}else
+			// Set the led to low
+			gpio_set_gpio_pin(LED0_GPIO);
+			gpio_set_gpio_pin(LED1_GPIO);
+			is_led_high=false;
+		}
+		else
 		{
-			gpio_clr_gpio_pin(LED0_GPIO);statusBool=false;
-			if(acq_status&&!statusBool)
+			// Set the led to high
+			gpio_clr_gpio_pin(LED0_GPIO);
+			if(is_in_acq)
 			{
 				 gpio_clr_gpio_pin(LED1_GPIO);
-			}else
-			{
-				gpio_set_gpio_pin(LED1_GPIO);
 			}
+			is_led_high=true;
 		}
-
 		vTaskDelay(200);
 	}
 }
@@ -506,6 +490,8 @@ static void vOutputLCD(void *pvParameters) {
 		vTaskDelay(100);
 	}
 }
+
+
 void initialiseLCD(void) {
 	static const gpio_map_t DIP204_SPI_GPIO_MAP = {
 		{ DIP204_SPI_SCK_PIN,	DIP204_SPI_SCK_FUNCTION }, // SPI Clock.
