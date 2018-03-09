@@ -11,6 +11,7 @@
 /* Environment header files. */
 #include "power_clocks_lib.h"
 
+#include "print_funcs.h"
 #include "board.h"
 #include "compiler.h"
 #include "dip204.h"
@@ -19,6 +20,7 @@
 #include "pm.h"
 #include "delay.h"
 #include "spi.h"
+#include "usart.h"
 #include "conf_clock.h"
 #include "adc.h"
 
@@ -49,7 +51,6 @@ volatile int TEMPERATURE_ROOM = 0;
 volatile bool is_in_acq = false;
 volatile bool is_light_ready= false;
 volatile bool is_pot_ready = false;
-volatile U32 char_recu = 0;
 
 // define var SAM
 #define USART_BAUDRATE              56700
@@ -96,37 +97,37 @@ int main(void) {
 	LED_Display(0);
 
 	initialiseLCD();
+	
+	/****************************/
+	/**	Configuration de USART **/
+	/****************************/
+	static const gpio_map_t USART_GPIO_MAP =
+	{
+		{AVR32_USART1_RXD_0_0_PIN, AVR32_USART1_RXD_0_0_FUNCTION},
+		{AVR32_USART1_TXD_0_0_PIN, AVR32_USART1_TXD_0_0_FUNCTION}
+	};
+	static const usart_options_t usart_opt =
+	{
+		.baudrate = USART_BAUDRATE,
+		.charlength = 8,
+		.paritytype = USART_NO_PARITY,
+		.stopbits = USART_1_STOPBIT,
+		.channelmode = USART_NORMAL_CHMODE
+	};
+	
+	// Assigner les pins du GPIO a etre utiliser par le USART1.
+	gpio_enable_module(USART_GPIO_MAP,sizeof(USART_GPIO_MAP) / sizeof(USART_GPIO_MAP[0]));
+	// Initialise le USART1 en mode seriel RS232
+	usart_init_rs232((&AVR32_USART1), &usart_opt, FOSC0);
 
 	POWER_SEMAPHORE = xSemaphoreCreateCounting(1,1);
 	TEMPERATURE_DESIRED_SEMAPHORE = xSemaphoreCreateCounting(1,1);
 	TEMPERATURE_ROOM_SEMAPHORE = xSemaphoreCreateCounting(1,1);
 
 	/* Start the demo tasks defined within this file. */
-	//xTaskCreate(
-	//vOutputLCD
-	//, (const signed portCHAR *)"Output"
-	//, configMINIMAL_STACK_SIZE*3
-	//, NULL
-	//, tskIDLE_PRIORITY
-	//, NULL );
-	//xTaskCreate(
-	//vCalculatePower
-	//, (const signed portCHAR *)"Calcul"
-	//, configMINIMAL_STACK_SIZE
-	//, NULL
-	//, tskIDLE_PRIORITY + 2
-	//, NULL );
-	xTaskCreate(
-	vReadingADC
-	, (const signed portCHAR *)"Reading"
-	, configMINIMAL_STACK_SIZE
-	, NULL
-	, tskIDLE_PRIORITY + 1
-	, NULL );
-
 	xTaskCreate(
 	LED_Flash
-	, (const signed portCHAR *)"Flash"
+	, (const signed portCHAR *)"LED"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY +1
@@ -134,7 +135,7 @@ int main(void) {
 
 	xTaskCreate(
 	UART_Cmd_RX
-	, (const signed portCHAR *)"ACQ"
+	, (const signed portCHAR *)"USART"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY + 1
@@ -150,8 +151,10 @@ int main(void) {
 
 static void UART_Cmd_RX(void *pvParameters)
 {
-	while(1){
-		/*
+	U32 char_recu = 0;
+	
+	while(1)
+	{
 		if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 		{
 			//Lire le char recu dans registre RHR, et le stocker dans un 32bit
@@ -160,16 +163,15 @@ static void UART_Cmd_RX(void *pvParameters)
 			// On active ou désactive l'acquisition le charactere recus
 			if(char_recu == ACQ_STOP_CHAR && is_in_acq)
 			{
-				//status |= STATUS_IN_ACQ;
-				is_in_acq=true;
-			}
-			if(char_recu == ACQ_START_CHAR && is_in_acq)
-			{
-				//status &= ~STATUS_IN_ACQ;
 				is_in_acq=false;
+			}
+			if(char_recu == ACQ_START_CHAR && !is_in_acq)
+			{
+				is_in_acq=true;
 			}
 			
 		}
+		/*
 		else if (AVR32_USART1.csr & (AVR32_USART_IDR_TXRDY_MASK)) // Donc cette l'interruption est lancee par une fin de transmission, bit TXRDY=1
 		{
 			if(status & STATUS_TX_POT_READY)
@@ -185,24 +187,16 @@ static void UART_Cmd_RX(void *pvParameters)
 				AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 			}
 		}
-		//if (GPIO_PUSH_BUTTON_0_PRESSED)
-		//{
-			//is_in_acq=true;
-		//}
-		//else if(GPIO_PUSH_BUTTON_1_PRESSED)
-		//{
-			//is_in_acq=false;
-		//}
-		//gpio_clear_pin_interrupt_flag(GPIO_PUSH_BUTTON_0);
-		//gpio_clear_pin_interrupt_flag(GPIO_PUSH_BUTTON_1);
 		*/
+		
 		vTaskDelay(50);
 	}
 	
 }
 static void LED_Flash(void *pvParameters)
 {
-	static bool is_led_high = false;
+	bool is_led_high = false;
+
 	while(1)
 	{
 		if(is_led_high)
@@ -222,6 +216,7 @@ static void LED_Flash(void *pvParameters)
 			}
 			is_led_high=true;
 		}
+		
 		vTaskDelay(200);
 	}
 }
@@ -499,33 +494,6 @@ void initialiseLCD(void) {
 		{ DIP204_SPI_MOSI_PIN, DIP204_SPI_MOSI_FUNCTION }, // MOSI.
 		{ DIP204_SPI_NPCS_PIN, DIP204_SPI_NPCS_FUNCTION } // Chip Select NPCS.
 	};
-
-	// Disable all interrupts.
-	Disable_global_interrupt();
-
-	// init the interrupts
-	INTC_init_interrupts();
-	//UART SAM
-	/****************************/
-	/**	Configuration de USART **/
-	/****************************/
-	static const gpio_map_t USART_GPIO_MAP =
-	{
-		{AVR32_USART1_RXD_0_0_PIN, AVR32_USART1_RXD_0_0_FUNCTION},
-		{AVR32_USART1_TXD_0_0_PIN, AVR32_USART1_TXD_0_0_FUNCTION}
-	};
-	
-	// Assigner les pins du GPIO a etre utiliser par le USART1.
-	gpio_enable_module(USART_GPIO_MAP,sizeof(USART_GPIO_MAP) / sizeof(USART_GPIO_MAP[0]));
-	// Initialise le USART1 en mode seriel RS232
-	//usart_init_rs232((&AVR32_USART1), &usart_opt, FOSC0);
-	// Enregister le USART interrupt handler au INTC
-	//INTC_register_interrupt(&usart_int_handler, AVR32_USART1_IRQ, USART_INTRPT_PRIO);
-	// Activer la source d'interrution du UART en reception (RXRDY)
-	AVR32_USART1.ier = AVR32_USART_IER_RXRDY_MASK;
-
-	// Enable all interrupts.
-	Enable_global_interrupt();
 
 	// add the spi options driver structure for the LCD DIP204
 	spi_options_t spiOptions = {

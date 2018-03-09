@@ -150,4 +150,7 @@
 // From module: USART - Universal Synchronous/Asynchronous Receiver/Transmitter
 #include <usart.h>
 
+// From module: USART Debug strings
+#include <print_funcs.h>
+
 #endif // ASF_H
