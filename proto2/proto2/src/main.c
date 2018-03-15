@@ -74,6 +74,9 @@ int main(void) {
 
 	sem_acq_status = xSemaphoreCreateCounting(1,1);
 
+	//Queue SAM
+	xQueueHandle queue =  xQueueCreate( 10, sizeof( unsigned long ) );
+
 	/* tasks. */
 	xTaskCreate(
 	LED_Flash
@@ -81,6 +84,22 @@ int main(void) {
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY +1
+	, NULL );
+
+	xTaskCreate(
+	ADC_Cmd
+	, (const signed portCHAR *)"LED"
+	, configMINIMAL_STACK_SIZE*3
+	, queue
+	, tskIDLE_PRIORITY +1
+	, NULL );
+
+	xTaskCreate(
+	UART_SendSample
+	, (const signed portCHAR *)"UART_SEND"
+	, configMINIMAL_STACK_SIZE*3
+	, queue
+	, tskIDLE_PRIORITY + 1
 	, NULL );
 
 	xTaskCreate(
@@ -158,6 +177,8 @@ static void UART_SendSample(void *pvParameters)
 {
 	while(1)
 	{
+		//queue exemple SAM
+		xQueueReceive(&pvParameters,&adc_pot_data, (portTickType) 10);
 		vTaskDelay(50);
 	}
 	
@@ -165,6 +186,16 @@ static void UART_SendSample(void *pvParameters)
 
 static void ADC_Cmd(void *pvParameters) {
 	while (1) {
+		
+		//Queue exemple SAM
+		xQueueSendToBack(&pvParameters,&adc_channel_pot,(portTickType) 10);
+
+		if (xQueueIsQueueFullFromISR(&pvParameters))
+		{
+			//AlarmMsgQ()
+		}
+		//////////////////////////////////////////
+
 		vTaskDelay(250);
 	}
 }
