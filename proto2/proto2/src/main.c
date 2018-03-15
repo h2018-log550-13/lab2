@@ -185,6 +185,35 @@ static void UART_SendSample(void *pvParameters)
 }
 
 static void ADC_Cmd(void *pvParameters) {
+	
+	// GPIO pin/adc-function map.
+	static const gpio_map_t ADC_GPIO_MAP = { { ADC_LIGHT_PIN,
+		ADC_LIGHT_FUNCTION }, { ADC_POTENTIOMETER_PIN,
+	ADC_POTENTIOMETER_FUNCTION } };
+
+	volatile avr32_adc_t *adc = &AVR32_ADC; // ADC IP registers address
+
+	unsigned long adc_value_pot = 0;
+	unsigned long adc_value_light = 0;
+	
+	// Assign the on-board sensors to their ADC channel.
+	unsigned short adc_channel_pot = ADC_POTENTIOMETER_CHANNEL;
+	unsigned short adc_channel_light = ADC_LIGHT_CHANNEL;
+
+	// Assign and enable GPIO pins to the ADC function.
+	gpio_enable_module(ADC_GPIO_MAP, 1);
+
+	// configure ADC
+	// Lower the ADC clock to match the ADC characteristics (because we configured
+	// the CPU clock to 12MHz, and the ADC clock characteristics are usually lower;
+	// cf. the ADC Characteristic section in the datasheet).
+	AVR32_ADC.mr |= 0x1 << AVR32_ADC_MR_PRESCAL_OFFSET;
+	adc_configure(adc);
+
+	// Enable the ADC channels.
+	adc_enable(adc, adc_channel_pot);
+	adc_enable(adc, adc_channel_light);
+
 	while (1) {
 		
 		//Queue exemple SAM
