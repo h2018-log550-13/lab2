@@ -36,10 +36,16 @@
 #define USART_TX_VAL_MASK           0xFE         // Les 7 premiers bits
 #define USART_TX_VAL_LIGHT_ID       1
 #define USART_TX_VAL_POT_ID         0
+#define USART_WAIT_TXRDY \
+while(!(AVR32_USART1.csr & (AVR32_USART_CSR_TXRDY_MASK)))
 #define USART_TX_SET_VAL(val,id) \
-AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR_MASK; AVR32_USART1.ier = AVR32_USART_IER_TXRDY_MASK;
+AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR_MASK; AVR32_USART1.ier = AVR32_USART_IER_TXRDY_MASK
 
-// tasks
+// message struct
+typedef struct ACQData {
+	U16 light_val;
+	U16 pot_val;
+};// tasks
 static void LED_Flash(void *pvParameters);
 static void UART_Cmd_RX(void *pvParameters);
 static void UART_SendSample(void *pvParameters);
@@ -80,12 +86,20 @@ int main(void) {
 	, (const signed portCHAR *)"LED"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
-	, tskIDLE_PRIORITY +1
+	, tskIDLE_PRIORITY + 1
 	, NULL );
 
 	xTaskCreate(
 	UART_Cmd_RX
-	, (const signed portCHAR *)"USART"
+	, (const signed portCHAR *)"USART RX"
+	, configMINIMAL_STACK_SIZE*3
+	, NULL
+	, tskIDLE_PRIORITY + 1
+	, NULL );
+
+	xTaskCreate(
+	UART_SendSample
+	, (const signed portCHAR *)"USART TX"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY + 1
@@ -156,8 +170,20 @@ static void UART_Cmd_RX(void *pvParameters)
 
 static void UART_SendSample(void *pvParameters)
 {
+	struct ACQData dummy;
+	dummy.light_val = 50;
+	dummy.pot_val = 400;
+	
 	while(1)
 	{
+		//queue exemple SAM
+		//xQueueReceive(&pvParameters,&adc_pot_data, (portTickType) 10);
+		
+		USART_WAIT_TXRDY;
+		USART_TX_SET_VAL(dummy.light_val, USART_TX_VAL_LIGHT_ID);
+		USART_WAIT_TXRDY;
+		USART_TX_SET_VAL(dummy.pot_val, USART_TX_VAL_POT_ID);
+
 		vTaskDelay(50);
 	}
 	
@@ -173,6 +199,11 @@ static void Alarm_msgQ(void *pvParameters) {
 	while (1) {
 		vTaskDelay(1000);
 	}
+}
+
+__attribute__((__interrupt__))
+static void usart_tx_handler(void) {
+	AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 }
 
 void init_usart(void) {
@@ -194,6 +225,8 @@ void init_usart(void) {
 	gpio_enable_module(USART_GPIO_MAP,sizeof(USART_GPIO_MAP) / sizeof(USART_GPIO_MAP[0]));
 	// Initialise le USART1 en mode seriel RS232
 	usart_init_rs232((&AVR32_USART1), &usart_opt, FOSC0);
+	// On enregistre le handler
+	INTC_register_interrupt(&usart_tx_handler, AVR32_USART1_IRQ, AVR32_INTC_INT0);
 }
 
 void init_lcd(void) {
