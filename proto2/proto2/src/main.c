@@ -45,7 +45,8 @@ AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR
 typedef struct ACQData {
 	U16 light_val;
 	U16 pot_val;
-};// tasks
+} ACQData;// tasks
+
 static void LED_Flash(void *pvParameters);
 static void UART_Cmd_RX(void *pvParameters);
 static void UART_SendSample(void *pvParameters);
@@ -58,8 +59,6 @@ void init_usart(void);
 
 // global var
 volatile bool is_in_acq = false;
-volatile bool is_light_ready= false;
-volatile bool is_pot_ready = false;
 
 // semaphore
 static xSemaphoreHandle sem_acq_status = NULL; //TODO
@@ -170,19 +169,18 @@ static void UART_Cmd_RX(void *pvParameters)
 
 static void UART_SendSample(void *pvParameters)
 {
-	struct ACQData dummy;
-	dummy.light_val = 50;
-	dummy.pot_val = 400;
+	struct ACQData acq_data;
 	
 	while(1)
 	{
-		//queue exemple SAM
-		//xQueueReceive(&pvParameters,&adc_pot_data, (portTickType) 10);
-		
-		USART_WAIT_TXRDY;
-		USART_TX_SET_VAL(dummy.light_val, USART_TX_VAL_LIGHT_ID);
-		USART_WAIT_TXRDY;
-		USART_TX_SET_VAL(dummy.pot_val, USART_TX_VAL_POT_ID);
+		//TODO semaphore
+		while(xQueueReceive(&pvParameters, &acq_data, (portTickType)0) == pdTRUE)
+		{
+			USART_WAIT_TXRDY;
+			USART_TX_SET_VAL(acq_data.light_val, USART_TX_VAL_LIGHT_ID);
+			USART_WAIT_TXRDY;
+			USART_TX_SET_VAL(acq_data.pot_val, USART_TX_VAL_POT_ID);
+		}
 
 		vTaskDelay(50);
 	}
