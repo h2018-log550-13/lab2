@@ -59,6 +59,9 @@ void init_usart(void);
 
 // global var
 volatile bool is_in_acq = false;
+volatile int idle_tick_count = 0;
+volatile portTickType last_idle_tick = 0;
+volatile short computed_sample_rate;
 
 // semaphore
 static xSemaphoreHandle sem_acq_status = NULL; //TODO
@@ -82,7 +85,7 @@ int main(void) {
 	/* tasks. */
 	xTaskCreate(
 	LED_Flash
-	, (const signed portCHAR *)"LED"
+	, (const signed portCHAR *)"LED and LCD"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY + 1
@@ -95,7 +98,7 @@ int main(void) {
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, NULL );
-
+/*
 	xTaskCreate(
 	UART_SendSample
 	, (const signed portCHAR *)"USART TX"
@@ -103,6 +106,7 @@ int main(void) {
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, NULL );
+*/
 
 	/* Start the scheduler. */
 	vTaskStartScheduler();
@@ -112,31 +116,75 @@ int main(void) {
 	return 0;
 }
 
+/**
+ * Tasks
+**/
+
 static void LED_Flash(void *pvParameters)
 {
 	bool is_led_high = false;
+	short led_cycle_count = 0;
+	short lcd_cycle_count = 0;
+	
+	unsigned short cpu_percent = 0;
+	portTickType total_tick_count = 0;
+	portTickType last_total_tick_count = 0;
+	char cpu_lcd_buffer[20];
+	char sample_lcd_buffer[20];
+	char dbg_lcd_buffer[20];
 
 	while(1)
 	{
-		if(is_led_high)
+		led_cycle_count++;
+		lcd_cycle_count++;
+		
+		if(led_cycle_count == 2)
 		{
-			// Set the led to low
-			gpio_set_gpio_pin(LED0_GPIO);
-			gpio_set_gpio_pin(LED1_GPIO);
-			is_led_high=false;
-		}
-		else
-		{
-			// Set the led to high
-			gpio_clr_gpio_pin(LED0_GPIO);
-			if(is_in_acq)
+			// update the led state
+			if(is_led_high)
 			{
-				gpio_clr_gpio_pin(LED1_GPIO);
+				// Set the led to low
+				gpio_set_gpio_pin(LED0_GPIO);
+				gpio_set_gpio_pin(LED1_GPIO);
+				is_led_high=false;
 			}
-			is_led_high=true;
+			else
+			{
+				// Set the led to high
+				gpio_clr_gpio_pin(LED0_GPIO);
+				if(is_in_acq)
+				{
+					gpio_clr_gpio_pin(LED1_GPIO);
+				}
+				is_led_high=true;
+			}
+			led_cycle_count = 0;
 		}
 		
-		vTaskDelay(200);
+		if(lcd_cycle_count == 5)
+		{
+			// update the lcd
+			total_tick_count = xTaskGetTickCount();
+			cpu_percent = (idle_tick_count * 100) / ((total_tick_count - last_total_tick_count) * 100);
+			sprintf(sample_lcd_buffer, "Sample: %dHz   ", computed_sample_rate);
+			sprintf(cpu_lcd_buffer,    "CPU:    %d%%  ", cpu_percent);
+
+			sprintf(dbg_lcd_buffer, "dbg:(a:%dc i:%dc)", (total_tick_count - last_total_tick_count), idle_tick_count);
+			
+			dip204_set_cursor_position(1, 1);
+			dip204_write_string(sample_lcd_buffer);
+			dip204_set_cursor_position(1, 2);
+			dip204_write_string(cpu_lcd_buffer);
+			dip204_set_cursor_position(1, 4);
+			dip204_write_string(dbg_lcd_buffer);
+			dip204_set_cursor_position(20, 4);
+			
+			last_total_tick_count = total_tick_count;
+			idle_tick_count = 0;
+			lcd_cycle_count = 0;
+		}
+
+		vTaskDelay(100);
 	}
 }
 
@@ -199,10 +247,35 @@ static void Alarm_msgQ(void *pvParameters) {
 	}
 }
 
+
+	
+/**
+ * Init functions
+**/
+
+void vApplicationIdleHook(void) {
+	const portTickType current_tick = xTaskGetTickCount();
+	if(current_tick != last_idle_tick)
+	{
+		// increment the tick count if it changed
+		idle_tick_count++;
+		last_idle_tick = current_tick;
+	}
+}
+
+/**
+ * Interrupts
+**/
+	
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
+	// Clear the register on TX
 	AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 }
+	
+/**
+ * Init functions
+**/
 
 void init_usart(void) {
 	static const gpio_map_t USART_GPIO_MAP =
