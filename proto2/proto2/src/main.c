@@ -96,7 +96,7 @@ int main(void) {
 	, (const signed portCHAR *)"USART RX"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
-	, tskIDLE_PRIORITY + 1
+	, tskIDLE_PRIORITY + 2
 	, NULL );
 /*
 	xTaskCreate(
@@ -104,7 +104,7 @@ int main(void) {
 	, (const signed portCHAR *)"USART TX"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
-	, tskIDLE_PRIORITY + 1
+	, tskIDLE_PRIORITY + 2
 	, NULL );
 */
 
@@ -127,6 +127,7 @@ static void LED_Flash(void *pvParameters)
 	short lcd_cycle_count = 0;
 	
 	unsigned short cpu_percent = 0;
+	portTickType tick_elapsed = 0;
 	portTickType total_tick_count = 0;
 	portTickType last_total_tick_count = 0;
 	char cpu_lcd_buffer[20];
@@ -165,11 +166,12 @@ static void LED_Flash(void *pvParameters)
 		{
 			// update the lcd
 			total_tick_count = xTaskGetTickCount();
-			cpu_percent = (idle_tick_count * 100) / ((total_tick_count - last_total_tick_count) * 100);
+			tick_elapsed = total_tick_count - last_total_tick_count;
+			cpu_percent = ((tick_elapsed - idle_tick_count) * 100) / tick_elapsed;
 			sprintf(sample_lcd_buffer, "Sample: %dHz   ", computed_sample_rate);
 			sprintf(cpu_lcd_buffer,    "CPU:    %d%%  ", cpu_percent);
 
-			sprintf(dbg_lcd_buffer, "dbg:(a:%dc i:%dc)", (total_tick_count - last_total_tick_count), idle_tick_count);
+			sprintf(dbg_lcd_buffer, "dbg:(a:%dc i:%dc)", (int)(tick_elapsed - idle_tick_count), (int)idle_tick_count);
 			
 			dip204_set_cursor_position(1, 1);
 			dip204_write_string(sample_lcd_buffer);
@@ -254,7 +256,7 @@ static void Alarm_msgQ(void *pvParameters) {
 **/
 
 void vApplicationIdleHook(void) {
-	const portTickType current_tick = xTaskGetTickCount();
+	register const portTickType current_tick = xTaskGetTickCount();
 	if(current_tick != last_idle_tick)
 	{
 		// increment the tick count if it changed
