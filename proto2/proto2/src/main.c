@@ -61,15 +61,19 @@ void init_usart(void);
 void wait_txrdy(void);
 
 // global var
-volatile U32 usart_rx_buffer = 0;
 volatile bool is_in_acq = false;
 volatile int idle_tick_count = 0;
 volatile portTickType last_idle_tick = 0;
 volatile short computed_sample_rate = 0;
-volatile void* alarm_task_handle = NULL;
 
 // semaphore
 static xSemaphoreHandle sem_acq_status = NULL; //TODO
+
+// queues
+static xQueueHandle usart_rx_buffer_q = NULL;
+
+// task
+static void* alarm_task_handle = NULL;
 
 int main(void) {
 
@@ -88,6 +92,8 @@ int main(void) {
 	init_usart();
 
 	sem_acq_status = xSemaphoreCreateCounting(1,1);
+	
+	usart_rx_buffer_q = xQueueCreate(16, sizeof(U32));
 
 	/* tasks. */
 	xTaskCreate(
@@ -207,11 +213,13 @@ static void LED_Flash(void *pvParameters)
 
 static void UART_Cmd_RX(void *pvParameters)
 {
+	U32 buffer;
+	
 	while(1)
 	{
-		if (usart_rx_buffer != 0)
+		while (xQueueReceive(usart_rx_buffer_q, &buffer, (portTickType)0) == pdTRUE)
 		{
-			switch(usart_rx_buffer)
+			switch(buffer)
 			{
 				case ACQ_STOP_CHAR:
 					is_in_acq=false;
@@ -222,7 +230,6 @@ static void UART_Cmd_RX(void *pvParameters)
 			}
 		}
 		
-		usart_rx_buffer = 0;
 		vTaskDelay(50);
 	}
 	
@@ -289,7 +296,8 @@ static void usart_tx_handler(void) {
 	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 	{
 		// Place la valeur dans un buffer sur RX
-		usart_rx_buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
+		U32 buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
+		xQueueSendToBackFromISR(usart_rx_buffer_q, &buffer, NULL);
 	}
 	else
 	{
