@@ -62,7 +62,7 @@
  *----------------------------------------------------------*/
 
 #define configUSE_PREEMPTION      1
-#define configUSE_IDLE_HOOK       0
+#define configUSE_IDLE_HOOK       1
 #define configUSE_TICK_HOOK       0
 #if (BOARD == UC3L_EK)
 	#define EXAMPLE_TARGET_MCUCLK_FREQ_HZ   12000000  // MCU clock target frequency, in Hz
