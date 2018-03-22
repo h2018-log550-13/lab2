@@ -77,6 +77,8 @@ int main(void) {
 	LED_Display(0);
 
 	/* init */
+	INTC_init_interrupts();
+
 	init_lcd();
 	init_usart();
 
