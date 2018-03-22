@@ -36,8 +36,7 @@
 #define USART_TX_VAL_MASK           0xFE         // Les 7 premiers bits
 #define USART_TX_VAL_LIGHT_ID       1
 #define USART_TX_VAL_POT_ID         0
-#define USART_WAIT_TXRDY \
-while(!(AVR32_USART1.csr & (AVR32_USART_CSR_TXRDY_MASK)))
+
 #define USART_TX_SET_VAL(val,id) \
 AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR_MASK; AVR32_USART1.ier = AVR32_USART_IER_TXRDY_MASK
 
@@ -45,8 +44,9 @@ AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR
 typedef struct ACQData {
 	U16 light_val;
 	U16 pot_val;
-} ACQData;// tasks
+} ACQData;
 
+// tasks
 static void LED_Flash(void *pvParameters);
 static void UART_Cmd_RX(void *pvParameters);
 static void UART_SendSample(void *pvParameters);
@@ -57,11 +57,16 @@ static void AlarmMsgQ(void *pvParameters);
 void init_lcd(void);
 void init_usart(void);
 
+// misc
+void wait_txrdy(void);
+
 // global var
+volatile U32 usart_rx_buffer = 0;
 volatile bool is_in_acq = false;
 volatile int idle_tick_count = 0;
 volatile portTickType last_idle_tick = 0;
-volatile short computed_sample_rate;
+volatile short computed_sample_rate = 0;
+volatile void* alarm_task_handle = NULL;
 
 // semaphore
 static xSemaphoreHandle sem_acq_status = NULL; //TODO
@@ -109,6 +114,14 @@ int main(void) {
 	, tskIDLE_PRIORITY + 2
 	, NULL );
 */
+	xTaskCreate(
+	AlarmMsgQ
+	, (const signed portCHAR *)"Alarm"
+	, configMINIMAL_STACK_SIZE*3
+	, NULL
+	, tskIDLE_PRIORITY + 1
+	, &alarm_task_handle );
+	vTaskSuspend(alarm_task_handle);
 
 	/* Start the scheduler. */
 	vTaskStartScheduler();
@@ -194,26 +207,22 @@ static void LED_Flash(void *pvParameters)
 
 static void UART_Cmd_RX(void *pvParameters)
 {
-	U32 char_recu = 0;
-	
 	while(1)
 	{
-		if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
+		if (usart_rx_buffer != 0)
 		{
-			//Lire le char recu dans registre RHR, et le stocker dans un 32bit
-			char_recu = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
-			
-			// On active ou désactive l'acquisition le charactere recus
-			if(char_recu == ACQ_STOP_CHAR && is_in_acq)
+			switch(usart_rx_buffer)
 			{
-				is_in_acq=false;
+				case ACQ_STOP_CHAR:
+					is_in_acq=false;
+				break;
+				case ACQ_START_CHAR:
+					is_in_acq=true;
+				break;
 			}
-			if(char_recu == ACQ_START_CHAR && !is_in_acq)
-			{
-				is_in_acq=true;
-			}	
 		}
 		
+		usart_rx_buffer = 0;
 		vTaskDelay(50);
 	}
 	
@@ -228,9 +237,9 @@ static void UART_SendSample(void *pvParameters)
 		//TODO semaphore
 		while(xQueueReceive(&pvParameters, &acq_data, (portTickType)0) == pdTRUE)
 		{
-			USART_WAIT_TXRDY;
+			wait_txrdy();
 			USART_TX_SET_VAL(acq_data.light_val, USART_TX_VAL_LIGHT_ID);
-			USART_WAIT_TXRDY;
+			wait_txrdy();
 			USART_TX_SET_VAL(acq_data.pot_val, USART_TX_VAL_POT_ID);
 		}
 
@@ -243,10 +252,13 @@ static void ADC_Cmd(void *pvParameters) {
 	while (1) {
 		vTaskDelay(250);
 	}
+	//TODO
+	//vTaskResume(alarm_task_handle);
 }
 
-static void Alarm_msgQ(void *pvParameters) {
+static void AlarmMsgQ(void *pvParameters) {
 	while (1) {
+		gpio_clr_gpio_pin(LED2_GPIO);
 		vTaskDelay(1000);
 	}
 }
@@ -261,7 +273,7 @@ void vApplicationIdleHook(void) {
 	register const portTickType current_tick = xTaskGetTickCount();
 	if(current_tick != last_idle_tick)
 	{
-		// increment the tick count if it changed
+		// incremente le nombre de cycle idle si on est au prochain cycle
 		idle_tick_count++;
 		last_idle_tick = current_tick;
 	}
@@ -273,8 +285,17 @@ void vApplicationIdleHook(void) {
 	
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
-	// Clear the register on TX
-	AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
+	
+	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
+	{
+		// Place la valeur dans un buffer sur RX
+		usart_rx_buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
+	}
+	else
+	{
+		// Reinitialise le registre sur TX
+		AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
+	}
 }
 	
 /**
@@ -302,6 +323,7 @@ void init_usart(void) {
 	usart_init_rs232((&AVR32_USART1), &usart_opt, FOSC0);
 	// On enregistre le handler
 	INTC_register_interrupt(&usart_tx_handler, AVR32_USART1_IRQ, AVR32_INTC_INT0);
+	AVR32_USART1.ier = AVR32_USART_IER_RXRDY_MASK;
 }
 
 void init_lcd(void) {
@@ -343,4 +365,9 @@ void init_lcd(void) {
 	// initialize LCD
 	dip204_init(backlight_PWM, true);
 
+}
+
+void wait_txrdy(void)
+{
+	while(!(AVR32_USART1.csr & (AVR32_USART_CSR_TXRDY_MASK)));
 }
