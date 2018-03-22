@@ -39,6 +39,11 @@
 #define USART_TX_SET_VAL(val,id) \
 AVR32_USART1.thr = ((val >> 2 & USART_TX_VAL_MASK) | id) & AVR32_USART_THR_TXCHR_MASK; AVR32_USART1.ier = AVR32_USART_IER_TXRDY_MASK;
 
+// message struct
+typedef struct ACQData {
+	U16 light_val;
+	U16 pot_val;
+} ACQData;
 // tasks
 static void LED_Flash(void *pvParameters);
 static void UART_Cmd_RX(void *pvParameters);
@@ -75,7 +80,7 @@ int main(void) {
 	sem_acq_status = xSemaphoreCreateCounting(1,1);
 
 	//Queue SAM
-	xQueueHandle queue =  xQueueCreate( 10, sizeof( unsigned long ) );
+	xQueueHandle queue =  xQueueCreate( 4, sizeof( ACQData ) );
 
 	/* tasks. */
 	xTaskCreate(
@@ -90,17 +95,17 @@ int main(void) {
 	ADC_Cmd
 	, (const signed portCHAR *)"LED"
 	, configMINIMAL_STACK_SIZE*3
-	, queue
+	, NULL
 	, tskIDLE_PRIORITY +1
 	, NULL );
 
-	xTaskCreate(
+	/*xTaskCreate(
 	UART_SendSample
 	, (const signed portCHAR *)"UART_SEND"
 	, configMINIMAL_STACK_SIZE*3
-	, queue
+	, NULL
 	, tskIDLE_PRIORITY + 1
-	, NULL );
+	, NULL );*/
 
 	xTaskCreate(
 	UART_Cmd_RX
@@ -129,6 +134,7 @@ static void LED_Flash(void *pvParameters)
 			// Set the led to low
 			gpio_set_gpio_pin(LED0_GPIO);
 			gpio_set_gpio_pin(LED1_GPIO);
+			
 			is_led_high=false;
 		}
 		else
@@ -175,10 +181,11 @@ static void UART_Cmd_RX(void *pvParameters)
 
 static void UART_SendSample(void *pvParameters)
 {
+	struct ACQData test_data;
 	while(1)
 	{
-		//queue exemple SAM
-		xQueueReceive(&pvParameters,&adc_pot_data, (portTickType) 10);
+		//if(xQueueIsQueueEmptyFromISR( queue)){}
+//		xQueueReceive(queue,(void *)&test_data, (portTickType) 10);
 		vTaskDelay(50);
 	}
 	
@@ -213,17 +220,25 @@ static void ADC_Cmd(void *pvParameters) {
 	// Enable the ADC channels.
 	adc_enable(adc, adc_channel_pot);
 	adc_enable(adc, adc_channel_light);
-
+	
+	struct ACQData test_data;
+	xQueueHandle queue =  xQueueCreate( 4, sizeof( ACQData ) );
+	struct ACQData acq_data;
 	while (1) {
 		
-		//Queue exemple SAM
-		xQueueSendToBack(&pvParameters,&adc_channel_pot,(portTickType) 10);
+		adc_start(adc);
+		acq_data.pot_val = adc_get_value(adc, adc_channel_pot);
+		acq_data.light_val = adc_get_value(adc, adc_channel_light);
 
-		if (xQueueIsQueueFullFromISR(&pvParameters))
+		if(queue!=0)//Si la queue existe
 		{
-			//AlarmMsgQ()
+			xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
 		}
-		//////////////////////////////////////////
+
+		if (xQueueIsQueueFullFromISR(queue))//Si la queue est pleine
+		{
+			//print_dbg("FULL\r\n");
+		}	
 
 		vTaskDelay(250);
 	}
