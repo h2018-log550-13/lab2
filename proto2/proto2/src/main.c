@@ -105,7 +105,7 @@ int main(void) {
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, NULL );
-/*
+
 	xTaskCreate(
 	ADC_Cmd
 	, (const signed portCHAR *)"ADC"
@@ -121,7 +121,7 @@ int main(void) {
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, NULL );
-*/
+
 	xTaskCreate(
 	UART_Cmd_RX
 	, (const signed portCHAR *)"USART RX"
@@ -259,7 +259,7 @@ static void UART_SendSample(void *pvParameters)
 			USART_TX_SET_VAL(acq_data.pot_val, USART_TX_VAL_POT_ID);
 		}
 
-		vTaskDelay(50);
+		vTaskDelay(2);
 	}
 	
 }
@@ -298,24 +298,25 @@ static void ADC_Cmd(void *pvParameters) {
 	struct ACQData acq_data;
 	while (1) {
 		
-		adc_start(adc);
-		acq_data.pot_val = adc_get_value(adc, adc_channel_pot);
-		acq_data.light_val = adc_get_value(adc, adc_channel_light);
+		if(is_in_acq)
+		{		
+			adc_start(adc);
+			acq_data.pot_val = adc_get_value(adc, adc_channel_pot);
+			acq_data.light_val = adc_get_value(adc, adc_channel_light);
 
-		if(queue!=0)//Si la queue existe
-		{
-			xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
+			if(queue!=0)//Si la queue existe
+			{
+				xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
+			}
+
+			if (xQueueIsQueueFullFromISR(queue))//Si la queue est pleine
+			{
+				vTaskResume(alarm_task_handle);
+			}	
 		}
-
-		if (xQueueIsQueueFullFromISR(queue))//Si la queue est pleine
-		{
-			//print_dbg("FULL\r\n");
-		}	
-
-		vTaskDelay(250);
+		
+		vTaskDelay(2);
 	}
-	//TODO
-	//vTaskResume(alarm_task_handle);
 }
 
 static void AlarmMsgQ(void *pvParameters) {
