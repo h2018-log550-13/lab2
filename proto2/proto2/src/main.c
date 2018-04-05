@@ -55,8 +55,9 @@ static void AlarmMsgQ(void *pvParameters);
 static void idle_tick_counter(void *pvParameters);
 
 // initialization functions
-void init_lcd(void);
 void init_usart(void);
+void init_adc(void);
+void init_lcd(void);
 
 // misc
 void wait_txrdy(void);
@@ -92,8 +93,9 @@ int main(void) {
 	/* init */
 	INTC_init_interrupts();
 
-	init_lcd();
 	init_usart();
+	init_adc();
+	init_lcd();
 
 	sem_acq_status = xSemaphoreCreateCounting(1,1);
 	sem_usart_buffer = xSemaphoreCreateCounting(1,1);
@@ -177,8 +179,7 @@ static void LED_Flash(void *pvParameters)
 	portTickType last_total_tick_count = 0;
 	char cpu_lcd_buffer[20];
 	char sample_lcd_buffer[20];
-	char dbg_lcd_buffer[20];
-
+	
 	while(1)
 	{
 		led_cycle_count++;
@@ -219,15 +220,11 @@ static void LED_Flash(void *pvParameters)
 			sprintf(sample_lcd_buffer, "Sample: %dHz   ", is_in_acq ? computed_sample_rate : 0);
 			xSemaphoreGive(sem_computed_sample_rate);
 			sprintf(cpu_lcd_buffer,    "CPU:    %d%%  ", cpu_percent);
-
-			sprintf(dbg_lcd_buffer, "dbg:(a:%dc i:%dc)", (int)(tick_elapsed - idle_tick_count), (int)idle_tick_count);
 			
 			dip204_set_cursor_position(1, 1);
 			dip204_write_string(sample_lcd_buffer);
 			dip204_set_cursor_position(1, 2);
 			dip204_write_string(cpu_lcd_buffer);
-			dip204_set_cursor_position(1, 4);
-			dip204_write_string(dbg_lcd_buffer);
 			dip204_set_cursor_position(20, 4);
 			
 			last_total_tick_count = total_tick_count;
@@ -271,56 +268,30 @@ static void UART_SendSample(void *pvParameters)
 	
 	while(1)
 	{
-		while(xQueueReceive(queue, &acq_data, (portTickType)0) == pdTRUE)
-		{
-			wait_txrdy();
-			USART_TX_SET_VAL(acq_data.light_val, USART_TX_VAL_LIGHT_ID);
-			wait_txrdy();
-			USART_TX_SET_VAL(acq_data.pot_val, USART_TX_VAL_POT_ID);
-		}
-		vTaskDelay(2);
+		xQueueReceive(queue, &acq_data, portMAX_DELAY);
+		wait_txrdy();
+		USART_TX_SET_VAL(acq_data.light_val, USART_TX_VAL_LIGHT_ID);
+		wait_txrdy();
+		USART_TX_SET_VAL(acq_data.pot_val, USART_TX_VAL_POT_ID);
 	}
 	
 }
 
 static void ADC_Cmd(void *pvParameters) {
-	
-	// GPIO pin/adc-function map.
-	static const gpio_map_t ADC_GPIO_MAP = { { ADC_LIGHT_PIN,
-		ADC_LIGHT_FUNCTION }, { ADC_POTENTIOMETER_PIN,
-	ADC_POTENTIOMETER_FUNCTION } };
-
 	volatile avr32_adc_t *adc = &AVR32_ADC; // ADC IP registers address
-	
-	// Assign the on-board sensors to their ADC channel.
-	unsigned short adc_channel_pot = ADC_POTENTIOMETER_CHANNEL;
-	unsigned short adc_channel_light = ADC_LIGHT_CHANNEL;
-
-	// Assign and enable GPIO pins to the ADC function.
-	gpio_enable_module(ADC_GPIO_MAP, 1);
-
-	// configure ADC
-	// Lower the ADC clock to match the ADC characteristics (because we configured
-	// the CPU clock to 12MHz, and the ADC clock characteristics are usually lower;
-	// cf. the ADC Characteristic section in the datasheet).
-	AVR32_ADC.mr |= 0x1 << AVR32_ADC_MR_PRESCAL_OFFSET;
-	adc_configure(adc);
-
-	// Enable the ADC channels.
-	adc_enable(adc, adc_channel_pot);
-	adc_enable(adc, adc_channel_light);
-
 	struct ACQData acq_data;
+	
 	portTickType last_tick_count = 0;
 	portTickType current_tick_count = 0;
+	
 	while (1) {
 		
 		xSemaphoreTake(sem_acq_status,portMAX_DELAY);
 		if(is_in_acq)
 		{		
 			adc_start(adc);
-			acq_data.pot_val = adc_get_value(adc, adc_channel_pot);
-			acq_data.light_val = adc_get_value(adc, adc_channel_light);
+			acq_data.pot_val = adc_get_value(adc, ADC_POTENTIOMETER_CHANNEL);
+			acq_data.light_val = adc_get_value(adc, ADC_LIGHT_CHANNEL);
 			
 			xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
 			current_tick_count = xTaskGetTickCount();
@@ -401,6 +372,29 @@ void init_usart(void) {
 	// On enregistre le handler
 	INTC_register_interrupt(&usart_tx_handler, AVR32_USART1_IRQ, AVR32_INTC_INT0);
 	AVR32_USART1.ier = AVR32_USART_IER_RXRDY_MASK;
+}
+
+void init_adc(void) {
+	// GPIO pin/adc-function map.
+	static const gpio_map_t ADC_GPIO_MAP = { { ADC_LIGHT_PIN,
+		ADC_LIGHT_FUNCTION }, { ADC_POTENTIOMETER_PIN,
+	ADC_POTENTIOMETER_FUNCTION } };
+	
+	volatile avr32_adc_t *adc = &AVR32_ADC; // ADC IP registers address
+
+	// Assign and enable GPIO pins to the ADC function.
+	gpio_enable_module(ADC_GPIO_MAP, 1);
+
+	// configure ADC
+	// Lower the ADC clock to match the ADC characteristics (because we configured
+	// the CPU clock to 12MHz, and the ADC clock characteristics are usually lower;
+	// cf. the ADC Characteristic section in the datasheet).
+	AVR32_ADC.mr |= 0x1 << AVR32_ADC_MR_PRESCAL_OFFSET;
+	adc_configure(adc);
+
+	// Enable the ADC channels.
+	adc_enable(adc, ADC_POTENTIOMETER_CHANNEL);
+	adc_enable(adc, ADC_LIGHT_CHANNEL);
 }
 
 void init_lcd(void) {
