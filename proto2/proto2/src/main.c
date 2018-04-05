@@ -1,7 +1,7 @@
 /*****************************************************************************
 * Auteur : Maxime Turenne
 * Copyright : Maxime Turenne
-* Description: Demo d'utilisation de FreeRTOS dans le cadre d'un thermostate numérique.
+* Description: Demo d'utilisation de FreeRTOS dans le cadre d'un thermostate numï¿½rique.
 */
 
 #include <stdio.h>
@@ -217,7 +217,7 @@ static void LED_Flash(void *pvParameters)
 			total_tick_count = xTaskGetTickCount();
 			tick_elapsed = total_tick_count - last_total_tick_count;
 			cpu_percent = ((tick_elapsed - idle_tick_count) * 100) / tick_elapsed;
-			sprintf(sample_lcd_buffer, "Sample: %dHz   ", computed_sample_rate);
+			sprintf(sample_lcd_buffer, "Sample: %dHz   ", is_in_acq ? computed_sample_rate : 0);
 			sprintf(cpu_lcd_buffer,    "CPU:    %d%%  ", cpu_percent);
 
 			sprintf(dbg_lcd_buffer, "dbg:(a:%dc i:%dc)", (int)(tick_elapsed - idle_tick_count), (int)idle_tick_count);
@@ -323,6 +323,8 @@ static void ADC_Cmd(void *pvParameters) {
 	
 	struct ACQData test_data;
 	struct ACQData acq_data;
+	portTickType last_tick_count = 0;
+	portTickType current_tick_count = 0;
 	while (1) {
 		
 		xSemaphoreTake(sem_acq_status,portMAX_DELAY);
@@ -334,12 +336,13 @@ static void ADC_Cmd(void *pvParameters) {
 
 			acq_data.light_val = adc_get_value(adc, adc_channel_light);
 
-
-			xSemaphoreTake(sem_queue,portMAX_DELAY);
-			if(queue!=0)//Si la queue existe
-			{
-				xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
-			}
+			xSemaphoreTake(sem_queue,(portTickType) 0);
+			
+			xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
+			current_tick_count = xTaskGetTickCount();
+			computed_sample_rate = 1000 / (current_tick_count - last_tick_count);
+			last_tick_count = current_tick_count;
+			
 
 			if (xQueueIsQueueFullFromISR(queue))//Si la queue est pleine
 			{
@@ -367,7 +370,7 @@ static void AlarmMsgQ(void *pvParameters) {
 **/
 
 void vApplicationIdleHook(void) {
-	register const portTickType current_tick = xTaskGetTickCount();
+	register const portTickType current_tick = xTaskGetTickCountFromISR();
 	if(current_tick != last_idle_tick)
 	{
 		// incremente le nombre de cycle idle si on est au prochain cycle
