@@ -68,15 +68,11 @@ volatile portTickType last_idle_tick = 0;
 volatile short computed_sample_rate = 0;
 
 // semaphore
-static xSemaphoreHandle sem_acq_status = NULL; //TODO
+static xSemaphoreHandle sem_acq_status = NULL;
 static xSemaphoreHandle sem_usart_buffer = NULL;
-static xSemaphoreHandle sem_acq_light_val = NULL;
-static xSemaphoreHandle sem_acq_pot_val = NULL;
-static xSemaphoreHandle sem_queue = NULL;
-//static xSemaphoreHandle sem_usart_csr = NULL;
-//static xSemaphoreHandle sem_tick_count = NULL;
-//static xSemaphoreHandle sem_acq_read = NULL;
-//static xSemaphoreHandle sem_acq_write = NULL;
+static xSemaphoreHandle sem_computed_sample_rate = NULL;
+
+
 
 // queue
 xQueueHandle queue = NULL;
@@ -101,14 +97,8 @@ int main(void) {
 	init_usart();
 
 	sem_acq_status = xSemaphoreCreateCounting(1,1);
-	//sem_acq_read =  xSemaphoreCreateCounting(1,1);
-	//sem_acq_write =  xSemaphoreCreateCounting(1,1);
 	sem_usart_buffer = xSemaphoreCreateCounting(1,1);
-	sem_acq_light_val = xSemaphoreCreateCounting(1,1);
-	sem_acq_pot_val = xSemaphoreCreateCounting(1,1);
-	sem_queue = xSemaphoreCreateCounting(1,1);
-	//sem_usart_csr = xSemaphoreCreateCounting(1,1);
-	//sem_tick_count = xSemaphoreCreateCounting(1,1);
+	sem_computed_sample_rate = xSemaphoreCreateCounting(1,1);
 
 	//Queue SAM
 	queue =  xQueueCreate( 4, sizeof( ACQData ) );
@@ -217,7 +207,9 @@ static void LED_Flash(void *pvParameters)
 			total_tick_count = xTaskGetTickCount();
 			tick_elapsed = total_tick_count - last_total_tick_count;
 			cpu_percent = ((tick_elapsed - idle_tick_count) * 100) / tick_elapsed;
+			xSemaphoreTake(sem_computed_sample_rate,portMAX_DELAY);
 			sprintf(sample_lcd_buffer, "Sample: %dHz   ", is_in_acq ? computed_sample_rate : 0);
+			xSemaphoreGive(sem_computed_sample_rate);
 			sprintf(cpu_lcd_buffer,    "CPU:    %d%%  ", cpu_percent);
 
 			sprintf(dbg_lcd_buffer, "dbg:(a:%dc i:%dc)", (int)(tick_elapsed - idle_tick_count), (int)idle_tick_count);
@@ -271,21 +263,13 @@ static void UART_SendSample(void *pvParameters)
 	
 	while(1)
 	{
-		//TODO semaphore
-		xSemaphoreTake(sem_queue,portMAX_DELAY);
 		while(xQueueReceive(queue, &acq_data, (portTickType)0) == pdTRUE)
 		{
 			wait_txrdy();
-
 			USART_TX_SET_VAL(acq_data.light_val, USART_TX_VAL_LIGHT_ID);
-
 			wait_txrdy();
-
 			USART_TX_SET_VAL(acq_data.pot_val, USART_TX_VAL_POT_ID);
-
 		}
-		xSemaphoreGive(sem_queue);
-
 		vTaskDelay(2);
 	}
 	
@@ -331,25 +315,21 @@ static void ADC_Cmd(void *pvParameters) {
 		if(is_in_acq)
 		{		
 			adc_start(adc);
-
 			acq_data.pot_val = adc_get_value(adc, adc_channel_pot);
-
 			acq_data.light_val = adc_get_value(adc, adc_channel_light);
-
-			xSemaphoreTake(sem_queue,(portTickType) 0);
 			
 			xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
 			current_tick_count = xTaskGetTickCount();
+			xSemaphoreTake(sem_computed_sample_rate,portMAX_DELAY);
 			computed_sample_rate = 1000 / (current_tick_count - last_tick_count);
+			xSemaphoreGive(sem_computed_sample_rate);
 			last_tick_count = current_tick_count;
-			
 
 			if (xQueueIsQueueFullFromISR(queue))//Si la queue est pleine
 			{
 				vTaskResume(alarm_task_handle);
 			}	
 		}
-		xSemaphoreGive(sem_queue);
 		xSemaphoreGive(sem_acq_status);
 		
 		vTaskDelay(2);
