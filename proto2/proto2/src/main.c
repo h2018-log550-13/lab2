@@ -63,11 +63,10 @@ void init_lcd(void);
 void wait_txrdy(void);
 
 // global var
-volatile U32 usart_rx_buffer = 0;
-volatile bool is_in_acq = false;
-volatile int idle_tick_count = 0;
-volatile portTickType last_idle_tick = 0;
-volatile short computed_sample_rate = 0;
+static U32 usart_rx_buffer = 0;
+static bool is_in_acq = false;
+static int idle_tick_count = 0;
+static short computed_sample_rate = 0;
 
 // semaphore
 static xSemaphoreHandle sem_acq_status = NULL;
@@ -285,7 +284,6 @@ static void ADC_Cmd(void *pvParameters) {
 	portTickType current_tick_count = 0;
 	
 	while (1) {
-		
 		xSemaphoreTake(sem_acq_status,portMAX_DELAY);
 		if(is_in_acq)
 		{		
@@ -293,17 +291,18 @@ static void ADC_Cmd(void *pvParameters) {
 			acq_data.pot_val = adc_get_value(adc, ADC_POTENTIOMETER_CHANNEL);
 			acq_data.light_val = adc_get_value(adc, ADC_LIGHT_CHANNEL);
 			
-			xQueueSendToBack(queue,(void *)&acq_data,(portTickType) 10);
-			current_tick_count = xTaskGetTickCount();
-			xSemaphoreTake(sem_computed_sample_rate,portMAX_DELAY);
-			computed_sample_rate = 1000 / (current_tick_count - last_tick_count);
-			xSemaphoreGive(sem_computed_sample_rate);
-			last_tick_count = current_tick_count;
-
-			if (xQueueIsQueueFullFromISR(queue))//Si la queue est pleine
+			if(xQueueSendToBack(queue, &acq_data, (portTickType)0) == errQUEUE_FULL)
 			{
 				vTaskResume(alarm_task_handle);
-			}	
+			}
+			else
+			{
+				current_tick_count = xTaskGetTickCount();
+				xSemaphoreTake(sem_computed_sample_rate,portMAX_DELAY);
+				computed_sample_rate = 1000 / (current_tick_count - last_tick_count);
+				xSemaphoreGive(sem_computed_sample_rate);
+				last_tick_count = current_tick_count;
+			}
 		}
 		xSemaphoreGive(sem_acq_status);
 		
@@ -320,6 +319,7 @@ static void AlarmMsgQ(void *pvParameters) {
 
 static void idle_tick_counter(void *pvParameters) {
 	while (1) {
+		//Cette tache est garantie de s'executer sans tache concurente, alors on a pas besoin de semaphore ici
 		idle_tick_count++;
 		vTaskDelay(1);
 	}
