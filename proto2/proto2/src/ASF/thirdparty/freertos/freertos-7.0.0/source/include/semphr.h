@@ -714,8 +714,6 @@ typedef xQueueHandle xSemaphoreHandle;
 //xSemaphoreTakeFromISR
 #define xSemaphoreTakeFromISR( xSemaphore, pxHigherPriorityTaskWoken )	xQueueReceiveFromISR( ( xQueueHandle ) ( xSemaphore ), NULL, ( pxHigherPriorityTaskWoken ) )
 
-
-
 #endif /* SEMAPHORE_H */
 
 

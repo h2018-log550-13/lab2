@@ -142,6 +142,7 @@ int main(void) {
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, &alarm_task_handle );
+
 	vTaskSuspend(alarm_task_handle);
 	
 	xTaskCreate(
@@ -360,7 +361,7 @@ static void idle_tick_counter(void *pvParameters) {
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
 	
-	xSemaphoreTakeFromISR(sem_usart_buffer,true);
+	xSemaphoreTakeFromISR(sem_usart_buffer,NULL);
 	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 	{
 		// Place la valeur dans un buffer sur RX
@@ -371,7 +372,7 @@ static void usart_tx_handler(void) {
 		// Reinitialise le registre sur TX
 		AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 	}
-	xSemaphoreGiveFromISR(sem_usart_buffer,true);
+	xSemaphoreGiveFromISR(sem_usart_buffer,NULL);
 }
 	
 /**
