@@ -711,6 +711,10 @@ typedef xQueueHandle xSemaphoreHandle;
  */
 #define xSemaphoreCreateCounting( uxMaxCount, uxInitialCount ) xQueueCreateCountingSemaphore( ( uxMaxCount ), ( uxInitialCount ) )
 
+//xSemaphoreTakeFromISR
+#define xSemaphoreTakeFromISR( xSemaphore, pxHigherPriorityTaskWoken )	xQueueReceiveFromISR( ( xQueueHandle ) ( xSemaphore ), NULL, ( pxHigherPriorityTaskWoken ) )
+
+
 
 #endif /* SEMAPHORE_H */
 
