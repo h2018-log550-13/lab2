@@ -197,7 +197,7 @@ static void LED_Flash(void *pvParameters)
 			{
 				// Set the led to high
 				gpio_clr_gpio_pin(LED0_GPIO);
-				xSemaphoreTake(sem_acq_status,(portTickType) 0);
+				xSemaphoreTake(sem_acq_status,portMAX_DELAY);
 				if(is_in_acq)
 				{
 					gpio_clr_gpio_pin(LED1_GPIO);
@@ -210,7 +210,6 @@ static void LED_Flash(void *pvParameters)
 		
 		if(lcd_cycle_count == 5)
 		{
-			xSemaphoreTake(sem_tick_count,(portTickType) 0);
 			// update the lcd
 			total_tick_count = xTaskGetTickCount();
 			tick_elapsed = total_tick_count - last_total_tick_count;
@@ -232,7 +231,6 @@ static void LED_Flash(void *pvParameters)
 			
 			last_total_tick_count = total_tick_count;
 			idle_tick_count = 0;
-			xSemaphoreGive(sem_tick_count);
 			lcd_cycle_count = 0;
 		}
 
@@ -244,11 +242,10 @@ static void UART_Cmd_RX(void *pvParameters)
 {
 	while(1)
 	{
-		xSemaphoreTake(sem_usart_buffer,(portTickType) 0);
+		xSemaphoreTake(sem_usart_buffer,portMAX_DELAY);
 		if (usart_rx_buffer != 0)
 		{
-			xSemaphoreTake(sem_acq_status,(portTickType) 0);
-			xSemaphoreTake(sem_acq_status,(portTickType) 0);
+			xSemaphoreTake(sem_acq_status,portMAX_DELAY);
 			switch(usart_rx_buffer)
 			{
 				case ACQ_STOP_CHAR:
@@ -259,7 +256,6 @@ static void UART_Cmd_RX(void *pvParameters)
 				break;
 			}
 		}
-		xSemaphoreGive(sem_acq_status);
 		xSemaphoreGive(sem_acq_status);
 		usart_rx_buffer = 0;
 		xSemaphoreGive(sem_usart_buffer);
@@ -294,9 +290,6 @@ static void ADC_Cmd(void *pvParameters) {
 	ADC_POTENTIOMETER_FUNCTION } };
 
 	volatile avr32_adc_t *adc = &AVR32_ADC; // ADC IP registers address
-
-	unsigned long adc_value_pot = 0;
-	unsigned long adc_value_light = 0;
 	
 	// Assign the on-board sensors to their ADC channel.
 	unsigned short adc_channel_pot = ADC_POTENTIOMETER_CHANNEL;
@@ -315,14 +308,13 @@ static void ADC_Cmd(void *pvParameters) {
 	// Enable the ADC channels.
 	adc_enable(adc, adc_channel_pot);
 	adc_enable(adc, adc_channel_light);
-	
-	struct ACQData test_data;
+
 	struct ACQData acq_data;
 	portTickType last_tick_count = 0;
 	portTickType current_tick_count = 0;
 	while (1) {
 		
-		xSemaphoreTake(sem_acq_status,(portTickType) 0);
+		xSemaphoreTake(sem_acq_status,portMAX_DELAY);
 		if(is_in_acq)
 		{		
 			adc_start(adc);
@@ -368,7 +360,7 @@ static void idle_tick_counter(void *pvParameters) {
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
 	
-	xSemaphoreTake(sem_usart_buffer,(portTickType) 0);
+	xSemaphoreTakeFromISR(sem_usart_buffer,true);
 	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 	{
 		// Place la valeur dans un buffer sur RX
@@ -379,7 +371,7 @@ static void usart_tx_handler(void) {
 		// Reinitialise le registre sur TX
 		AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 	}
-	xSemaphoreGive(sem_usart_buffer);
+	xSemaphoreGiveFromISR(sem_usart_buffer,true);
 }
 	
 /**
