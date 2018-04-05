@@ -52,6 +52,7 @@ static void UART_Cmd_RX(void *pvParameters);
 static void UART_SendSample(void *pvParameters);
 static void ADC_Cmd(void *pvParameters);
 static void AlarmMsgQ(void *pvParameters);
+static void idle_tick_counter(void *pvParameters);
 
 // initialization functions
 void init_lcd(void);
@@ -71,8 +72,6 @@ volatile short computed_sample_rate = 0;
 static xSemaphoreHandle sem_acq_status = NULL;
 static xSemaphoreHandle sem_usart_buffer = NULL;
 static xSemaphoreHandle sem_computed_sample_rate = NULL;
-
-
 
 // queue
 xQueueHandle queue = NULL;
@@ -144,6 +143,14 @@ int main(void) {
 	, tskIDLE_PRIORITY + 1
 	, &alarm_task_handle );
 	vTaskSuspend(alarm_task_handle);
+	
+	xTaskCreate(
+	idle_tick_counter
+	, (const signed portCHAR *)"Idle tick counter"
+	, configMINIMAL_STACK_SIZE*3
+	, NULL
+	, tskIDLE_PRIORITY
+	, NULL );
 
 	/* Start the scheduler. */
 	vTaskStartScheduler();
@@ -190,7 +197,7 @@ static void LED_Flash(void *pvParameters)
 			{
 				// Set the led to high
 				gpio_clr_gpio_pin(LED0_GPIO);
-				xSemaphoreTake(sem_acq_status,portMAX_DELAY);
+				xSemaphoreTake(sem_acq_status,(portTickType) 0);
 				if(is_in_acq)
 				{
 					gpio_clr_gpio_pin(LED1_GPIO);
@@ -203,6 +210,7 @@ static void LED_Flash(void *pvParameters)
 		
 		if(lcd_cycle_count == 5)
 		{
+			xSemaphoreTake(sem_tick_count,(portTickType) 0);
 			// update the lcd
 			total_tick_count = xTaskGetTickCount();
 			tick_elapsed = total_tick_count - last_total_tick_count;
@@ -224,6 +232,7 @@ static void LED_Flash(void *pvParameters)
 			
 			last_total_tick_count = total_tick_count;
 			idle_tick_count = 0;
+			xSemaphoreGive(sem_tick_count);
 			lcd_cycle_count = 0;
 		}
 
@@ -235,10 +244,11 @@ static void UART_Cmd_RX(void *pvParameters)
 {
 	while(1)
 	{
-		xSemaphoreTake(sem_usart_buffer,portMAX_DELAY);
+		xSemaphoreTake(sem_usart_buffer,(portTickType) 0);
 		if (usart_rx_buffer != 0)
 		{
-			xSemaphoreTake(sem_acq_status,portMAX_DELAY);
+			xSemaphoreTake(sem_acq_status,(portTickType) 0);
+			xSemaphoreTake(sem_acq_status,(portTickType) 0);
 			switch(usart_rx_buffer)
 			{
 				case ACQ_STOP_CHAR:
@@ -249,6 +259,7 @@ static void UART_Cmd_RX(void *pvParameters)
 				break;
 			}
 		}
+		xSemaphoreGive(sem_acq_status);
 		xSemaphoreGive(sem_acq_status);
 		usart_rx_buffer = 0;
 		xSemaphoreGive(sem_usart_buffer);
@@ -311,7 +322,7 @@ static void ADC_Cmd(void *pvParameters) {
 	portTickType current_tick_count = 0;
 	while (1) {
 		
-		xSemaphoreTake(sem_acq_status,portMAX_DELAY);
+		xSemaphoreTake(sem_acq_status,(portTickType) 0);
 		if(is_in_acq)
 		{		
 			adc_start(adc);
@@ -343,19 +354,10 @@ static void AlarmMsgQ(void *pvParameters) {
 	}
 }
 
-
-	
-/**
- * Init functions
-**/
-
-void vApplicationIdleHook(void) {
-	register const portTickType current_tick = xTaskGetTickCountFromISR();
-	if(current_tick != last_idle_tick)
-	{
-		// incremente le nombre de cycle idle si on est au prochain cycle
+static void idle_tick_counter(void *pvParameters) {
+	while (1) {
 		idle_tick_count++;
-		last_idle_tick = current_tick;
+		vTaskDelay(1);
 	}
 }
 
@@ -366,20 +368,18 @@ void vApplicationIdleHook(void) {
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
 	
-	if(xSemaphoreTakeFromISR(sem_usart_buffer,true))
+	xSemaphoreTake(sem_usart_buffer,(portTickType) 0);
+	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 	{
-		if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
-		{
-			// Place la valeur dans un buffer sur RX
-			usart_rx_buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
-		}
-		else
-		{
-			// Reinitialise le registre sur TX
-			AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
-		}
-		xSemaphoreGiveFromISR(sem_usart_buffer,true);
+		// Place la valeur dans un buffer sur RX
+		usart_rx_buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
 	}
+	else
+	{
+		// Reinitialise le registre sur TX
+		AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
+	}
+	xSemaphoreGive(sem_usart_buffer);
 }
 	
 /**
