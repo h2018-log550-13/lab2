@@ -1,7 +1,6 @@
 /*****************************************************************************
-* Auteur : Maxime Turenne
-* Copyright : Maxime Turenne
-* Description: Demo d'utilisation de FreeRTOS dans le cadre d'un thermostate num�rique.
+* Auteur : Maxime Turenne, Massaki Archambault, Samuel Lamoureux
+* Copyright : Maxime Turenne, Massaki Archambault, Samuel Lamoureux
 */
 
 #include <stdio.h>
@@ -198,12 +197,14 @@ static void LED_Flash(void *pvParameters)
 			{
 				// Set the led to high
 				gpio_clr_gpio_pin(LED0_GPIO);
-				xSemaphoreTake(sem_acq_status,portMAX_DELAY);
+				
+				xSemaphoreTake(sem_acq_status, portMAX_DELAY);
 				if(is_in_acq)
 				{
 					gpio_clr_gpio_pin(LED1_GPIO);
 				}
 				xSemaphoreGive(sem_acq_status);
+				
 				is_led_high=true;
 			}
 			led_cycle_count = 0;
@@ -215,9 +216,11 @@ static void LED_Flash(void *pvParameters)
 			total_tick_count = xTaskGetTickCount();
 			tick_elapsed = total_tick_count - last_total_tick_count;
 			cpu_percent = ((tick_elapsed - idle_tick_count) * 100) / tick_elapsed;
-			xSemaphoreTake(sem_computed_sample_rate,portMAX_DELAY);
+			
+			xSemaphoreTake(sem_computed_sample_rate, portMAX_DELAY);
 			sprintf(sample_lcd_buffer, "Sample: %dHz   ", is_in_acq ? computed_sample_rate : 0);
 			xSemaphoreGive(sem_computed_sample_rate);
+			
 			sprintf(cpu_lcd_buffer,    "CPU:    %d%%  ", cpu_percent);
 			
 			dip204_set_cursor_position(1, 1);
@@ -239,10 +242,10 @@ static void UART_Cmd_RX(void *pvParameters)
 {
 	while(1)
 	{
-		xSemaphoreTake(sem_usart_buffer,portMAX_DELAY);
+		xSemaphoreTake(sem_usart_buffer, portMAX_DELAY);
 		if (usart_rx_buffer != 0)
 		{
-			xSemaphoreTake(sem_acq_status,portMAX_DELAY);
+			xSemaphoreTake(sem_acq_status, portMAX_DELAY);
 			switch(usart_rx_buffer)
 			{
 				case ACQ_STOP_CHAR:
@@ -251,11 +254,12 @@ static void UART_Cmd_RX(void *pvParameters)
 				case ACQ_START_CHAR:
 					is_in_acq=true;
 				break;
-			}
 		}
 		xSemaphoreGive(sem_acq_status);
+		}
 		usart_rx_buffer = 0;
 		xSemaphoreGive(sem_usart_buffer);
+		
 		vTaskDelay(50);
 	}
 	
@@ -284,7 +288,7 @@ static void ADC_Cmd(void *pvParameters) {
 	portTickType current_tick_count = 0;
 	
 	while (1) {
-		xSemaphoreTake(sem_acq_status,portMAX_DELAY);
+		xSemaphoreTake(sem_acq_status, portMAX_DELAY);
 		if(is_in_acq)
 		{		
 			adc_start(adc);
@@ -298,7 +302,7 @@ static void ADC_Cmd(void *pvParameters) {
 			else
 			{
 				current_tick_count = xTaskGetTickCount();
-				xSemaphoreTake(sem_computed_sample_rate,portMAX_DELAY);
+				xSemaphoreTake(sem_computed_sample_rate, portMAX_DELAY);
 				computed_sample_rate = 1000 / (current_tick_count - last_tick_count);
 				xSemaphoreGive(sem_computed_sample_rate);
 				last_tick_count = current_tick_count;
@@ -332,7 +336,7 @@ static void idle_tick_counter(void *pvParameters) {
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
 	
-	xSemaphoreTakeFromISR(sem_usart_buffer,NULL);
+	xSemaphoreTakeFromISR(sem_usart_buffer, NULL);
 	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 	{
 		// Place la valeur dans un buffer sur RX
@@ -343,7 +347,7 @@ static void usart_tx_handler(void) {
 		// Reinitialise le registre sur TX
 		AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 	}
-	xSemaphoreGiveFromISR(sem_usart_buffer,NULL);
+	xSemaphoreGiveFromISR(sem_usart_buffer, NULL);
 }
 	
 /**
@@ -376,9 +380,10 @@ void init_usart(void) {
 
 void init_adc(void) {
 	// GPIO pin/adc-function map.
-	static const gpio_map_t ADC_GPIO_MAP = { { ADC_LIGHT_PIN,
-		ADC_LIGHT_FUNCTION }, { ADC_POTENTIOMETER_PIN,
-	ADC_POTENTIOMETER_FUNCTION } };
+	static const gpio_map_t ADC_GPIO_MAP = {
+		{ ADC_LIGHT_PIN,                 ADC_LIGHT_FUNCTION },
+		{ ADC_POTENTIOMETER_PIN, ADC_POTENTIOMETER_FUNCTION }
+	};
 	
 	volatile avr32_adc_t *adc = &AVR32_ADC; // ADC IP registers address
 
