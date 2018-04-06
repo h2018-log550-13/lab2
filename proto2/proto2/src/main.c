@@ -73,7 +73,7 @@ static xSemaphoreHandle sem_usart_buffer = NULL;
 static xSemaphoreHandle sem_computed_sample_rate = NULL;
 
 // queue
-xQueueHandle queue = NULL;
+xQueueHandle queue_adc = NULL;
 
 // task
 volatile void* alarm_task_handle = NULL;
@@ -100,7 +100,7 @@ int main(void) {
 	sem_computed_sample_rate = xSemaphoreCreateCounting(1,1);
 
 	//Queue SAM
-	queue =  xQueueCreate( 4, sizeof( ACQData ) );
+	queue_adc =  xQueueCreate( 4, sizeof( ACQData ) );
 
 	/* tasks. */
 	xTaskCreate(
@@ -121,7 +121,7 @@ int main(void) {
 
 	xTaskCreate(
 	UART_SendSample
-	, (const signed portCHAR *)"UART_SEND"
+	, (const signed portCHAR *)"UART TX"
 	, configMINIMAL_STACK_SIZE*3
 	, NULL
 	, tskIDLE_PRIORITY + 1
@@ -142,7 +142,7 @@ int main(void) {
 	, NULL
 	, tskIDLE_PRIORITY + 1
 	, &alarm_task_handle );
-
+	// The alarm task start suspended
 	vTaskSuspend(alarm_task_handle);
 	
 	xTaskCreate(
@@ -167,10 +167,12 @@ int main(void) {
 
 static void LED_Flash(void *pvParameters)
 {
+	// vars for led flashing
 	bool is_led_high = false;
 	short led_cycle_count = 0;
 	short lcd_cycle_count = 0;
 	
+	// vars for lcd display
 	unsigned short cpu_percent = 0;
 	portTickType tick_elapsed = 0;
 	portTickType total_tick_count = 0;
@@ -215,6 +217,7 @@ static void LED_Flash(void *pvParameters)
 			// update the lcd
 			total_tick_count = xTaskGetTickCount();
 			tick_elapsed = total_tick_count - last_total_tick_count;
+			// Calculate the cpu percent used
 			cpu_percent = ((tick_elapsed - idle_tick_count) * 100) / tick_elapsed;
 			
 			xSemaphoreTake(sem_computed_sample_rate, portMAX_DELAY);
@@ -271,7 +274,7 @@ static void UART_SendSample(void *pvParameters)
 	
 	while(1)
 	{
-		xQueueReceive(queue, &acq_data, portMAX_DELAY);
+		xQueueReceive(queue_adc, &acq_data, portMAX_DELAY);
 		wait_txrdy();
 		USART_TX_SET_VAL(acq_data.light_val, USART_TX_VAL_LIGHT_ID);
 		wait_txrdy();
@@ -295,7 +298,7 @@ static void ADC_Cmd(void *pvParameters) {
 			acq_data.pot_val = adc_get_value(adc, ADC_POTENTIOMETER_CHANNEL);
 			acq_data.light_val = adc_get_value(adc, ADC_LIGHT_CHANNEL);
 			
-			if(xQueueSendToBack(queue, &acq_data, (portTickType)0) == errQUEUE_FULL)
+			if(xQueueSendToBack(queue_adc, &acq_data, (portTickType)0) == errQUEUE_FULL)
 			{
 				vTaskResume(alarm_task_handle);
 			}
@@ -303,6 +306,7 @@ static void ADC_Cmd(void *pvParameters) {
 			{
 				current_tick_count = xTaskGetTickCount();
 				xSemaphoreTake(sem_computed_sample_rate, portMAX_DELAY);
+				// Le cacul du taux d'echantillonage a seulement 1ms de resolution
 				computed_sample_rate = 1000 / (current_tick_count - last_tick_count);
 				xSemaphoreGive(sem_computed_sample_rate);
 				last_tick_count = current_tick_count;
@@ -445,5 +449,6 @@ void init_lcd(void) {
 
 void wait_txrdy(void)
 {
+	// spinlock while waiting for the usart to be ready again
 	while(!(AVR32_USART1.csr & (AVR32_USART_CSR_TXRDY_MASK)));
 }
