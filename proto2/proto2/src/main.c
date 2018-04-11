@@ -257,8 +257,8 @@ static void UART_Cmd_RX(void *pvParameters)
 				case ACQ_START_CHAR:
 					is_in_acq=true;
 				break;
-		}
-		xSemaphoreGive(sem_acq_status);
+			}
+			xSemaphoreGive(sem_acq_status);
 		}
 		usart_rx_buffer = 0;
 		xSemaphoreGive(sem_usart_buffer);
@@ -339,19 +339,20 @@ static void idle_tick_counter(void *pvParameters) {
 	
 __attribute__((__interrupt__))
 static void usart_tx_handler(void) {
-	
-	xSemaphoreTakeFromISR(sem_usart_buffer, NULL);
 	if (AVR32_USART1.csr & (AVR32_USART_CSR_RXRDY_MASK))
 	{
-		// Place la valeur dans un buffer sur RX
-		usart_rx_buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
+		if(xSemaphoreTakeFromISR(sem_usart_buffer, NULL) == pdTRUE)
+		{
+			// Place la valeur dans un buffer sur RX
+			usart_rx_buffer = (AVR32_USART1.rhr & AVR32_USART_RHR_RXCHR_MASK);
+			xSemaphoreGiveFromISR(sem_usart_buffer, NULL);
+		}
 	}
 	else
 	{
 		// Reinitialise le registre sur TX
 		AVR32_USART1.idr = AVR32_USART_IDR_TXRDY_MASK;
 	}
-	xSemaphoreGiveFromISR(sem_usart_buffer, NULL);
 }
 	
 /**
